@@ -1,0 +1,298 @@
+<!DOCTYPE html>
+<html lang="zh-TW">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    
+    <meta name="apple-mobile-web-app-capable" content="yes"> <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent"> <meta name="mobile-web-app-capable" content="yes"> <title>我的極簡記帳本</title>
+    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+    <style>
+        /* 手機版優化：字體稍微調大，按鈕好按一點 */
+        body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif; background-color: #f4f7f6; margin: 0; padding: 15px; -webkit-tap-highlight-color: transparent; }
+        .container { max-width: 100%; margin: 0 auto; background: white; padding: 20px; border-radius: 15px; box-shadow: 0 2px 10px rgba(0,0,0,0.1); }
+        h2 { margin-top: 0; font-size: 24px; }
+        
+        .balance-container { display: flex; justify-content: space-between; margin-bottom: 20px; background: #e0f7fa; padding: 15px; border-radius: 12px; }
+        .balance-item { text-align: center; width: 32%; }
+        .balance-item h4 { margin: 5px 0; font-size: 12px; color: #555; }
+        .balance-item p { margin: 0; font-size: 16px; font-weight: bold; word-break: break-all;}
+        .money-plus { color: #2ecc71; }
+        .money-minus { color: #c0392b; }
+
+        .chart-container { position: relative; height: 250px; width: 100%; margin-bottom: 20px; }
+        .chart-error { text-align: center; color: #999; padding: 50px 0; display: none; }
+
+        .form-control { margin-bottom: 12px; }
+        label { display: block; margin-bottom: 5px; font-weight: bold; color: #555; }
+        
+        /* 輸入框加大，方便手機點擊 */
+        input, select { width: 100%; padding: 12px; border: 1px solid #ddd; border-radius: 8px; box-sizing: border-box; font-size: 16px; background: #fff; }
+        input:focus, select:focus { outline: none; border-color: #3498db; }
+        
+        .btn { cursor: pointer; background-color: #3498db; color: white; border: 0; display: block; width: 100%; padding: 12px; margin-top: 15px; border-radius: 8px; font-size: 18px; font-weight: bold; }
+        .btn:active { background-color: #2980b9; transform: scale(0.98); }
+        .btn-clear { background-color: #555; margin-top: 40px; font-size: 14px; padding: 10px; }
+
+        .list { list-style-type: none; padding: 0; margin-top: 20px; }
+        .list li { background-color: #fff; border-bottom: 1px solid #eee; color: #333; display: flex; justify-content: space-between; align-items: center; padding: 12px 5px; }
+        .list li.plus { border-left: 5px solid #2ecc71; } /* 改成左邊顯示條，手機比較好看 */
+        .list li.minus { border-left: 5px solid #c0392b; }
+        
+        .delete-btn { cursor: pointer; background-color: #e74c3c; color: white; border: 0; padding: 5px 10px; font-size: 14px; margin-left: 10px; border-radius: 5px; }
+    </style>
+</head>
+<body>
+
+<div class="container">
+    <h2>📱 我的記帳本</h2>
+    
+    <div class="balance-container">
+        <div class="balance-item">
+            <h4>總收入</h4>
+            <p id="money-plus" class="money-plus">+$0</p>
+        </div>
+        <div class="balance-item">
+            <h4>總資產</h4>
+            <p id="balance">$0</p>
+        </div>
+        <div class="balance-item">
+            <h4>總支出</h4>
+            <p id="money-minus" class="money-minus">-$0</p>
+        </div>
+    </div>
+
+    <div class="chart-container">
+        <canvas id="assetChart"></canvas>
+        <div id="chartError" class="chart-error">需連網載入圖表</div>
+    </div>
+
+    <form id="form">
+        <div class="form-control">
+            <label>日期</label>
+            <input type="date" id="date" required>
+        </div>
+        <div style="display: flex; gap: 10px;"> <div class="form-control" style="flex: 1;">
+                <label>類型</label>
+                <select id="type">
+                    <option value="expense">支出</option>
+                    <option value="income">收入</option>
+                </select>
+            </div>
+            <div class="form-control" style="flex: 1;">
+                <label>帳戶</label>
+                <select id="account">
+                    <option value="現金">現金</option>
+                    <option value="銀行">銀行</option>
+                    <option value="信用卡">信用卡</option>
+                </select>
+            </div>
+        </div>
+        <div class="form-control">
+            <label>分類</label>
+            <select id="category"></select>
+        </div>
+        <div class="form-control">
+            <label>金額</label>
+            <input type="number" id="amount" placeholder="0" inputmode="numeric" required> </div>
+        <div class="form-control">
+            <label>備註</label>
+            <input type="text" id="text" placeholder="早餐...">
+        </div>
+        <button class="btn">新增紀錄</button>
+    </form>
+
+    <h3 style="margin-top:30px; border-bottom: 2px solid #eee; padding-bottom: 10px;">最近紀錄</h3>
+    <ul id="list" class="list"></ul>
+
+    <button id="clearBtn" class="btn btn-clear">清除所有資料</button>
+    <p style="text-align:center; font-size:12px; color:#999; margin-top:10px;">資料僅儲存於此手機</p>
+</div>
+
+<script>
+    // 1. 元素抓取
+    const balance = document.getElementById('balance');
+    const money_plus = document.getElementById('money-plus');
+    const money_minus = document.getElementById('money-minus');
+    const list = document.getElementById('list');
+    const form = document.getElementById('form');
+    const text = document.getElementById('text');
+    const amount = document.getElementById('amount');
+    const dateInput = document.getElementById('date');
+    const typeInput = document.getElementById('type');
+    const accountInput = document.getElementById('account');
+    const categoryInput = document.getElementById('category');
+    const chartError = document.getElementById('chartError');
+    const chartCanvas = document.getElementById('assetChart');
+    const clearBtn = document.getElementById('clearBtn');
+
+    // 2. 日期設定
+    function setTodayDate() {
+        const now = new Date();
+        const year = now.getFullYear();
+        const month = String(now.getMonth() + 1).padStart(2, '0');
+        const day = String(now.getDate()).padStart(2, '0');
+        dateInput.value = `${year}-${month}-${day}`;
+    }
+    setTodayDate();
+
+    // 3. 分類設定
+    const categories = {
+        expense: ["伙食", "交通", "娛樂", "房租", "購物", "醫療", "其他"],
+        income: ["薪水", "獎金", "投資", "兼職", "其他"]
+    };
+
+    function updateCategories() {
+        const type = typeInput.value;
+        const options = categories[type];
+        categoryInput.innerHTML = "";
+        if (options) {
+            options.forEach(cat => {
+                const option = document.createElement("option");
+                option.value = cat;
+                option.innerText = cat;
+                categoryInput.appendChild(option);
+            });
+        }
+    }
+    typeInput.addEventListener('change', updateCategories);
+    updateCategories();
+
+    // 4. 讀取資料
+    const localStorageTransactions = JSON.parse(localStorage.getItem('transactions'));
+    let transactions = localStorage.getItem('transactions') !== null ? localStorageTransactions : [];
+
+    // 5. 圖表
+    let myChart; 
+    function initChart() {
+        if (typeof Chart === 'undefined') {
+            chartCanvas.style.display = 'none';
+            chartError.style.display = 'block';
+            return;
+        }
+        const ctx = chartCanvas.getContext('2d');
+        myChart = new Chart(ctx, {
+            type: 'bar',
+            data: {
+                labels: ['現金', '銀行', '信用卡'],
+                datasets: [{
+                    label: '資金水位',
+                    data: [0, 0, 0],
+                    backgroundColor: ['#36a2eb', '#4bc0c0', '#ff6384'],
+                    borderWidth: 1
+                }]
+            },
+            options: {
+                responsive: true,
+                maintainAspectRatio: false,
+                scales: { y: { beginAtZero: true } },
+                plugins: { legend: { display: false } }
+            }
+        });
+    }
+
+    // 6. 新增交易
+    function addTransaction(e) {
+        e.preventDefault();
+        if (text.value.trim() === '' || amount.value.trim() === '') {
+            alert("請輸入金額與備註");
+            return;
+        }
+        const type = typeInput.value;
+        const amountValue = type === 'expense' ? -Math.abs(amount.value) : Math.abs(amount.value);
+
+        const transaction = {
+            id: generateID(),
+            date: dateInput.value,
+            text: text.value,
+            amount: amountValue,
+            type: type,
+            account: accountInput.value,
+            category: categoryInput.value
+        };
+
+        transactions.push(transaction);
+        addTransactionDOM(transaction);
+        updateValues();
+        updateLocalStorage();
+
+        text.value = '';
+        amount.value = '';
+    }
+
+    function generateID() { return Math.floor(Math.random() * 100000000); }
+
+    function addTransactionDOM(transaction) {
+        const sign = transaction.amount < 0 ? '-' : '+';
+        const item = document.createElement('li');
+        item.classList.add(transaction.amount < 0 ? 'minus' : 'plus');
+        item.innerHTML = `
+            <div style="flex-grow:1;">
+                <div style="font-weight:bold; font-size:14px;">${transaction.category} <span style="font-weight:normal; color:#666; font-size:12px;">(${transaction.account})</span></div>
+                <div style="font-size:12px; color:#888;">${transaction.date} - ${transaction.text}</div>
+            </div>
+            <div style="display:flex; align-items:center;">
+                <span style="font-weight:bold; font-size:16px; margin-right:10px;">${sign}${Math.abs(transaction.amount)}</span>
+                <button class="delete-btn" onclick="removeTransaction(${transaction.id})">x</button>
+            </div>
+        `;
+        list.appendChild(item);
+    }
+
+    function updateValues() {
+        const amounts = transactions.map(transaction => transaction.amount);
+        const total = amounts.reduce((acc, item) => (acc += item), 0).toFixed(0);
+        const income = amounts.filter(item => item > 0).reduce((acc, item) => (acc += item), 0).toFixed(0);
+        const expense = (amounts.filter(item => item < 0).reduce((acc, item) => (acc += item), 0) * -1).toFixed(0);
+
+        balance.innerText = `$${total}`;
+        money_plus.innerText = `+$${income}`;
+        money_minus.innerText = `-$${expense}`;
+
+        const accountBalances = { '現金': 0, '銀行': 0, '信用卡': 0 };
+        transactions.forEach(t => {
+            if (accountBalances[t.account] === undefined) accountBalances[t.account] = 0;
+            accountBalances[t.account] += t.amount;
+        });
+
+        if(myChart) {
+            myChart.data.datasets[0].data = [accountBalances['現金'], accountBalances['銀行'], accountBalances['信用卡']];
+            myChart.data.datasets[0].backgroundColor = [
+                accountBalances['現金'] >= 0 ? '#4bc0c0' : '#ff6384',
+                accountBalances['銀行'] >= 0 ? '#36a2eb' : '#ff6384',
+                accountBalances['信用卡'] >= 0 ? '#36a2eb' : '#ff6384' 
+            ];
+            myChart.update();
+        }
+    }
+
+    function removeTransaction(id) {
+        transactions = transactions.filter(transaction => transaction.id !== id);
+        updateLocalStorage();
+        init();
+    }
+
+    function clearAllData() {
+        if (!confirm("確定要刪除所有資料嗎？")) return;
+        transactions = [];
+        updateLocalStorage();
+        init();
+    }
+    clearBtn.addEventListener('click', clearAllData);
+
+    function updateLocalStorage() {
+        localStorage.setItem('transactions', JSON.stringify(transactions));
+    }
+
+    function init() {
+        list.innerHTML = '';
+        transactions.forEach(addTransactionDOM);
+        initChart();
+        updateValues();
+    }
+
+    init();
+    form.addEventListener('submit', addTransaction);
+</script>
+
+</body>
+</html>
